@@ -1,0 +1,60 @@
+{
+	"files": [
+		{
+			"path": "C:\\ProgramData\\upx.rar",
+			"hash": "ebb707dd7c0cdbc0ea5bcfe1504dfbea"
+		},
+		{
+			"path": "C:\\ProgramData\\data\\upx.rar",
+			"hash": "ebb707dd7c0cdbc0ea5bcfe1504dfbea"
+		},
+		{
+			"path": "C:\\un.exe",
+			"hash": "5770866edbb1a095d7edc981f37d9d53"
+		},
+		{
+			"path": "C:\\ProgramData\\data\\upx.exe",
+			"hash": "5770866edbb1a095d7edc981f37d9d53"
+		},
+		{
+			"path": "C:\\ProgramData\\Microsoft\\iusb3mon.dat",
+			"hash": ""
+		},
+		{
+			"path": "C:\\Microsoft\\iusb3mon.dat",
+			"hash": ""
+		},
+		{
+			"path": "C:\\Program Files\\Default.dat",
+			"hash": ""
+		}
+	],
+	"tasks": [
+		{
+			"name": "Storage Service"
+		},
+		{
+			"name": "Windows Connection Manager"
+		}
+	],
+	"netWorks": [
+		{
+			"ip": "118.107.43.146",
+			"ports": [
+				8727,
+				9999
+			]
+		}
+	],
+	"registries": [
+		{
+			"key": "HKEY_CURRENT_USER\test",
+			"value": "value"
+		}
+	],
+	"services": [
+		{
+			"name": "ServiceName"
+		}
+	]
+}
