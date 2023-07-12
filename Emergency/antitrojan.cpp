@@ -1,8 +1,4 @@
-#include <windows.h>
-#include <taskschd.h>
-#include <comdef.h>
-#include <wincred.h>
-#include <iostream>
+﻿#include <iostream>
 #include <fstream>
 #include <ShlObj.h>
 #include <stdio.h>
@@ -10,20 +6,27 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <regex>
 
 #include "md5.h"
 #include "json.hpp"
+#include "schtasks.h"
 
 using namespace std;
 using namespace nlohmann;
+
+string configFile = "config.json";
+// whether to handle the operations
+bool manage = false;
 
 struct File {
     string path;
     string hash;
 };
 
-struct Task {
+struct FileTask {
     string name;
+    regex action;
 };
 
 struct Net {
@@ -39,6 +42,13 @@ struct Registry {
 struct Service {
     string name;
 };
+
+vector<File> files;
+vector<FileTask> tasks;
+vector<Net> netWorks;
+vector<Registry> registries;
+vector<Service> services;
+
 
 bool fileExists(string& filePath) {
     if (FILE* file = fopen(filePath.c_str(), "r")) {
@@ -105,12 +115,14 @@ void addFireWallRule(string& ip, vector<int> ports) {
     system(cmd.c_str());
 }
 
+/*
 void deleteScheduledTask(string& taskName) {
     // add "" aroud the name
     string cmd = "schtasks /delete /tn \"" + taskName + "\" /f";
     cout << cmd << endl;
     system(cmd.c_str());
 }
+*/
 
 void deleteRegistry(string& key, string& value) {
     string cmd = "reg delete " + key + " /v " + value + " /f";
@@ -118,37 +130,23 @@ void deleteRegistry(string& key, string& value) {
     system(cmd.c_str());
 }
 
-void stopService(string& name) {
-    string cmd = "sc start " + name + " start=disabled";
+void findService(string& name) {
+    string cmd = "sc query | findstr " + '"' + name + '"';
     cout << cmd << endl;
     system(cmd.c_str());
 }
 
-int main() {
-    string configFile = "config.json";
+void stopService(string& name) {
+    string cmd = "sc stop " + name + " start=disabled";
+    cout << cmd << endl;
+    system(cmd.c_str());
+}
 
-    if (!IsUserAnAdmin()) {
-        cout << "Please run as an administrator, Press enter to exit" << endl;
-        cin.get();
-        exit(1);
-    }
-
-    if (!fileExists(configFile)) {
-        cout << "Please ensure there is a config.json file under this directory" << endl;
-        cout << "Press enter to exit" << endl;
-        cin.get();
-        exit(1);
-    }
-
-    // initialization
+void configure() {
     ifstream f("config.json");
     json config = json::parse(f);
 
-    vector<File> files;
-    vector<Task> tasks;
-    vector<Net> netWorks;
-    vector<Registry> registries;
-    vector<Service> services;
+    manage = config["handle"];
 
     for (auto& i : config["files"].items()) {
         File file;
@@ -159,8 +157,9 @@ int main() {
     }
 
     for (auto& i : config["tasks"].items()) {
-        Task task;
+        FileTask task;
         task.name = i.value()["name"];
+        task.action = regex(i.value()["action"]);
         cout << "New task " << task.name << " added" << endl;
         tasks.push_back(task);
     }
@@ -172,7 +171,7 @@ int main() {
         for (auto& j : i.value()["ports"].items()) {
             ports.push_back(j.value());
         }
-        
+
         net.ports = ports;
         // format output
         cout << "New network " << net.ip << " added, ports: ";
@@ -202,7 +201,75 @@ int main() {
     SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_GREEN);
     cout << "Configuration complete, execution started" << endl << endl;
     SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+}
 
+bool scan() {
+    for (File i : files) {
+        if (fileExists(i.path)) {
+            if (checkFileHash(i.hash, i.path)) {
+                cout << "Hash of file is matched" << endl;
+            }
+            else {
+                cout << "Hash of file is not matched" << endl;
+            }
+        }
+        else {
+            cout << i.path << " does not exist" << endl;
+        }
+    }
+
+    vector<Task> currentTasks = listAllScheduledTasks();
+
+    cout << endl;
+
+    for (FileTask i : tasks) {
+        // default name i.name
+        string name = i.name;
+        bool matched = false;
+
+        for (Task j : currentTasks) {
+            if (j.name == i.name) {
+                for (string k : j.actions) {
+                    if (regex_match(k, i.action)) {
+                        matched = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            // if name is not matched but action is matched delete it too
+            else {
+                for (string k : j.actions) {
+                    if (regex_match(k, i.action)) {
+                        cout << j.name << endl;
+                        matched = true;
+                        name = j.name;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (matched) {
+            cout << "Task " << name << " mathces the regex" << endl;
+        }
+    }
+
+    /*
+    for (Net i : netWorks) {
+        addFireWallRule(i.ip, i.ports);
+    }
+
+    for (Registry i : registries) {
+        deleteRegistry(i.key, i.value);
+    }
+    */
+    for (Service i : services) {
+        findService(i.name);
+    }
+}
+
+bool handle() {
     for (File i : files) {
         if (fileExists(i.path)) {
             if (checkFileHash(i.hash, i.path)) {
@@ -213,13 +280,48 @@ int main() {
                 cout << "Hash of file is not matched, delete unsuccessfull" << endl;
             }
         }
-        else {
-            cout << i.path << " does not exist" << endl;
-        }
     }
 
-    for (Task i : tasks) {
-        deleteScheduledTask(i.name);
+    vector<Task> currentTasks = listAllScheduledTasks();
+
+    cout << endl;
+
+    for (FileTask i : tasks) {
+        // default name i.name
+        string name = i.name;
+        bool matched = false;
+
+        for (Task j : currentTasks) {
+            if (j.name == i.name) {
+                for (string k : j.actions) {
+                    if (regex_match(k, i.action)) {
+                        matched = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            // if name is not matched but action is matched delete it too
+            else {
+                for (string k : j.actions) {
+                    if (regex_match(k, i.action)) {
+                        cout << j.name << endl;
+                        matched = true;
+                        name = j.name;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (matched) {
+            if (deleteScheduledTask(name)) {
+                cout << "Task " << name << " successfully deleted" << endl;
+            }
+            else {
+                cout << "Task " << name << " unsuccessfully deletd" << endl;
+            }
+        }
     }
 
     for (Net i : netWorks) {
@@ -233,8 +335,37 @@ int main() {
     for (Service i : services) {
         stopService(i.name);
     }
+}
 
+int main() {
+    bool manage = false;
+
+    if (!IsUserAnAdmin()) {
+        cout << "Please run as an administrator, Press enter to exit" << endl;
+        cin.get();
+        exit(1);
+    }
+
+    if (!fileExists(configFile)) {
+        cout << "Please ensure there is a config.json file under this directory" << endl;
+        cout << "Press enter to exit" << endl;
+        cin.get();
+        exit(1);
+    }
+
+    configure();
+
+    if (manage) {
+        handle();
+    }
+    else {
+        scan();
+    }
+
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_GREEN);
     cout << "Task completed, Press enter to exit" << endl;
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+
     cin.get();
 
     return 0;
